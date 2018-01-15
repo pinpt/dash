@@ -52,6 +52,19 @@ To prevent config spam, the command will wait for a period of approximately 5 se
 
 The `stdout`, `stderr` and `stdin` pipes are all directly connected to the forked process.
 
+## Docker
+
+Add the following to your Dockerfile to install dash into your container:
+
+```
+ENV DASH_VERSION=1.0.0
+RUN cd /tmp && \
+	curl -O -L https://github.com/pinpt/dash/releases/download/${DASH_VERSION}/dash-linux && \
+	mv /tmp/dash-linux /bin/dash && \
+	chmod +x /bin/dash
+```
+
+Update `DASH_VERSION` with the version you want to use.
 
 ## License
 
