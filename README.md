@@ -30,7 +30,7 @@ The environment is first inherited from the parent process (this command) and an
 Any parameters for configuring this command will need to proceed the double dash and any parameters after the double dash are passed along to the forked process.
 
 ```
-pinpt dash c/foo=bar s/bar=foo -- mycommand foo --bar
+dash c/foo=bar s/bar=foo -- mycommand foo --bar
 ```
 
 The object names are expressed using a simple pattern: `<type>/<key>=<value>`
