@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -262,6 +263,11 @@ The stdout, stderr and stdin pipes are all directly connected to the forked proc
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
+		secretDir, _ := cmd.Flags().GetString("secretDir")
+		if secretDir != "" && !FileExists(secretDir) {
+			os.MkdirAll(secretDir, 0755)
+		}
+
 		if len(monitorObjects) > 0 {
 			client, err := NewEnvClient()
 			if err != nil {
@@ -332,7 +338,14 @@ The stdout, stderr and stdin pipes are all directly connected to the forked proc
 									if err == nil && sec != nil {
 										mu.Lock()
 										for k, v := range sec.Data {
-											config[makeKey(k, prefix)] = string(v)
+											envkey := makeKey(k, prefix)
+											if secretDir != "" {
+												// write out each secret into a file with the same name as the environment variable
+												// so that you can optional read them from external programs like curl
+												fn := filepath.Join(secretDir, envkey)
+												ioutil.WriteFile(fn, v, 0400)
+											}
+											config[envkey] = string(v)
 										}
 										mu.Unlock()
 										configch <- true
@@ -502,6 +515,7 @@ func getEnvStringSlice(k string) []string {
 func init() {
 	dashCmd.Flags().String("prefix", "", "the prefix to prepend to any environment name before sending")
 	dashCmd.Flags().String("namespace", Getenv("PP_K8S_NAMESPACE", "default"), "kubernetes namespace to use")
+	dashCmd.Flags().String("secretDir", "/var/run/dash", "directory to write secrets")
 	dashCmd.Flags().String("log-level", Getenv("PP_LOG_LEVEL", "info"), "set the log level")
 	dashCmd.Flags().String("log-color", "dark", "set the log color profile (dark or light). only applies to console logging")
 	dashCmd.Flags().String("log-format", Getenv("PP_LOG_FORMAT", "default"), "set the log format (json, logfmt, default)")
