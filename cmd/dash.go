@@ -29,6 +29,8 @@ import (
 	"time"
 
 	k "github.com/ericchiang/k8s"
+	"github.com/go-kit/kit/log"
+	"github.com/go-logfmt/logfmt"
 	"github.com/spf13/cobra"
 )
 
@@ -362,6 +364,8 @@ The stdout, stderr and stdin pipes are all directly connected to the forked proc
 			}
 		}
 
+		logResend, _ := cmd.Flags().GetString("log-resend")
+
 		var exitStatus int
 		var configSHA string
 		var lastConfig time.Time
@@ -395,8 +399,55 @@ The stdout, stderr and stdin pipes are all directly connected to the forked proc
 						// when we get a start request, we launch the program
 						Info(logger, "starting", "cmd", command, "args", Stringify(commandArgs))
 						c = exec.Command(command, commandArgs...)
-						c.Stdout = os.Stdout
-						c.Stderr = os.Stderr
+						started := make(chan bool, 1)
+						if logResend != "" {
+							switch logResend {
+							case "stdout", "/dev/stdout":
+								{
+									c.Stderr = os.Stderr
+									p, err := c.StdoutPipe()
+									if err != nil {
+										Fatal(logger, "error creating stdout pipe", "err", err)
+									}
+									resender(p, false, logger, started)
+								}
+							case "stderr", "/dev/stderr":
+								{
+									c.Stdout = os.Stdout
+									p, err := c.StderrPipe()
+									if err != nil {
+										Fatal(logger, "error creating stderr pipe", "err", err)
+									}
+									resender(p, false, logger, started)
+								}
+							default:
+								{
+									c.Stdout = os.Stdout
+									c.Stderr = os.Stderr
+									go func() {
+										// wait for the process to start and then try and open the file
+										// in the case the file is created in the process
+										<-started
+										for i := 0; i < 3; i++ {
+											p, err := os.Open(logResend)
+											if err != nil {
+												// try again
+												time.Sleep(time.Second)
+												continue
+											}
+											ch := make(chan bool, 1)
+											ch <- true
+											resender(p, true, logger, ch)
+											return
+										}
+										Fatal(logger, "error creating output file", "name", logResend)
+									}()
+								}
+							}
+						} else {
+							c.Stdout = os.Stdout
+							c.Stderr = os.Stderr
+						}
 						c.Stdin = os.Stdin
 						// we have to hold a lock since the watchers mutate this directly
 						mu.Lock()
@@ -408,6 +459,7 @@ The stdout, stderr and stdin pipes are all directly connected to the forked proc
 							exitStatus = 255
 							break Loop
 						}
+						started <- true
 						Info(logger, "started", "cmd", command, "pid", c.Process.Pid)
 						go sigHandler(c.Process.Pid, signalChannel)
 						go func() {
@@ -495,6 +547,26 @@ The stdout, stderr and stdin pipes are all directly connected to the forked proc
 	},
 }
 
+// resender will attempt to parse r as logfmt and resend to the logger
+func resender(r io.ReadCloser, close bool, logger log.Logger, started <-chan bool) {
+	go func() {
+		// wait for the process to be running
+		<-started
+		// try and parse each output line as a logfmt record
+		decoder := logfmt.NewDecoder(r)
+		for decoder.ScanRecord() {
+			kv := make([]interface{}, 0)
+			for decoder.ScanKeyval() {
+				kv = append(kv, string(decoder.Key()), string(decoder.Value()))
+			}
+			logger.Log(kv...)
+		}
+		if close {
+			r.Close()
+		}
+	}()
+}
+
 // Execute adds all child commands to the root command sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
@@ -521,4 +593,5 @@ func init() {
 	dashCmd.Flags().String("log-format", Getenv("PP_LOG_FORMAT", "default"), "set the log format (json, logfmt, default)")
 	dashCmd.Flags().String("log-output", Getenv("PP_LOG_OUTPUT", "-"), "the location of the log file, use - for default or specify a location")
 	dashCmd.Flags().StringSlice("log-ingestion", getEnvStringSlice("PP_LOG_INGESTION"), "one of more urls to log ingestion servers")
+	dashCmd.Flags().String("log-resend", Getenv("PP_LOG_RESEND", ""), "if set will resend logs from the output device/file to log ingestion server")
 }

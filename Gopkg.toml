@@ -39,3 +39,7 @@
 [[constraint]]
   branch = "v1"
   name = "gopkg.in/yaml.v1"
+
+[[constraint]]
+  name = "github.com/go-logfmt/logfmt"
+  version = "0.3.0"

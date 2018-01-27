@@ -283,6 +283,9 @@ func (l *consoleLogger) Log(keyvals ...interface{}) error {
 			}
 		}
 	}
+	if m[pkgKey] == nil {
+		m[pkgKey] = "unset"
+	}
 	pkg := m[pkgKey].(string)
 	if len(pkg) > 7 {
 		pkg = pkg[0:7]
