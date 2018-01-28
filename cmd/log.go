@@ -521,6 +521,8 @@ type oklogger struct {
 	ch   chan string
 }
 
+var oklogIgnoreKeys = map[interface{}]bool{"caller": true}
+
 // Log will dispatch the log to the next logger
 func (l *oklogger) Log(keyvals ...interface{}) error {
 	l.next.Log(keyvals...)
@@ -530,13 +532,20 @@ func (l *oklogger) Log(keyvals ...interface{}) error {
 	m := make(map[string]interface{}, n)
 	for i := 0; i < len(keyvals); i += 2 {
 		k := keyvals[i]
+		if oklogIgnoreKeys[k] {
+			continue
+		}
 		var v interface{} = log.ErrMissingValue
 		if i+1 < len(keyvals) {
 			v = keyvals[i+1]
 		}
 		merge(m, k, v)
 	}
-	l.ch <- Stringify(m)
+	s := Stringify(m)
+	// if we can't stringify, don't send it
+	if !strings.HasPrefix(s, "<error:") {
+		l.ch <- s
+	}
 	return nil
 }
 
@@ -789,16 +798,20 @@ func NewLoggerUtil(writer io.Writer, format LogOutputFormat, theme LogColorTheme
 	return &nocloselog{logger}
 }
 
+const dockerCGroup = "/proc/self/cgroup"
+const k8sServiceAcct = "/var/run/secrets/kubernetes.io/serviceaccount"
+
 // NewLogger returns a new log.Logger for a given command
 func NewLogger(cmd *cobra.Command, pkg string) log.Logger {
-	var isdocker bool
+	var isContainer bool
 	if r.GOOS == "linux" {
-		fn := "/proc/self/cgroup"
-		if FileExists(fn) {
-			buf, err := ioutil.ReadFile(fn)
+		if FileExists(dockerCGroup) {
+			buf, err := ioutil.ReadFile(dockerCGroup)
 			if err != nil && bytes.Contains(buf, []byte("docker")) {
-				isdocker = true
+				isContainer = true
 			}
+		} else if FileExists(k8sServiceAcct) {
+			isContainer = true
 		}
 	}
 
@@ -809,7 +822,7 @@ func NewLogger(cmd *cobra.Command, pkg string) log.Logger {
 	case "-":
 		{
 			writer = os.Stdout
-			if isdocker {
+			if isContainer {
 				// for docker, we want to log to /dev/stderr
 				writer = os.Stderr
 			}
@@ -835,7 +848,7 @@ func NewLogger(cmd *cobra.Command, pkg string) log.Logger {
 				os.Exit(1)
 			}
 			w := os.Stdout
-			if isdocker {
+			if isContainer {
 				w = os.Stderr
 			}
 			// write to both the normal output as well as the file
@@ -922,7 +935,7 @@ func NewLogger(cmd *cobra.Command, pkg string) log.Logger {
 
 	var opts []WithLogOptions
 
-	if isdocker || isfile {
+	if isContainer || isfile {
 		// if inside docker or in a file, we want timestamp
 		opts = []WithLogOptions{
 			WithDefaultTimestampLogOption(),
